@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import joblib
@@ -6,6 +5,7 @@ import pandas as pd
 import numpy as np
 import os
 import requests
+
 
 # =========================================================
 # CREATE FLASK APP
@@ -18,31 +18,38 @@ CORS(app)
 # PATHS
 # =========================================================
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
 PROJECT_DIR = os.path.dirname(BASE_DIR)
 ML_DIR = os.path.join(PROJECT_DIR, "ml")
 DATA_DIR = os.path.join(PROJECT_DIR, "data")
 
 os.makedirs(ML_DIR, exist_ok=True)
 
+
 # =========================================================
-# SMALL ML PIPELINE FROM HUGGING FACE
+# DOWNLOAD ML PIPELINE FROM HUGGING FACE IF NEEDED
 # =========================================================
 
-pipeline_path = os.path.join(ML_DIR, "pipeline_small.pkl")
+pipeline_path = os.path.join(
+    ML_DIR,
+    "pipeline.pkl"
+)
 
 MODEL_URL = (
     "https://huggingface.co/agrovisionai2026/"
     "agrovision-ai-model/resolve/main/pipeline_small.pkl"
 )
 
-
 def download_pipeline():
     if os.path.isfile(pipeline_path):
         print("Local small ML pipeline found.")
         return
 
-    print("Downloading small ML pipeline from Hugging Face...")
+    print("Downloading ML pipeline from Hugging Face...")
+    print("The model is large, so this may take several minutes.")
 
     temporary_path = pipeline_path + ".download"
 
@@ -54,16 +61,13 @@ def download_pipeline():
             allow_redirects=True
         ) as response:
             response.raise_for_status()
-
             with open(temporary_path, "wb") as model_file:
+
                 for chunk in response.iter_content(
                     chunk_size=1024 * 1024
                 ):
                     if chunk:
                         model_file.write(chunk)
-
-        if not os.path.isfile(temporary_path):
-            raise RuntimeError("Model download failed.")
 
         if os.path.getsize(temporary_path) == 0:
             raise RuntimeError("Downloaded model file is empty.")
@@ -76,22 +80,23 @@ def download_pipeline():
             os.remove(temporary_path)
         raise
 
-
-# =========================================================
-# LOAD ML PIPELINE
-# =========================================================
-
 try:
     download_pipeline()
 
-    pipeline = joblib.load(pipeline_path)
+    pipeline = joblib.load(
+        pipeline_path
+    )
+
     model = pipeline["model"]
     encoder = pipeline["encoder"]
 
-    print("Small ML pipeline loaded successfully.")
+    print("ML pipeline loaded successfully.")
 
 except Exception as e:
-    app.logger.exception("Could not download or load ML pipeline.")
+
+    print("ERROR: Could not download or load ML pipeline.")
+    print(str(e))
+
     pipeline = None
     model = None
     encoder = None
@@ -101,73 +106,99 @@ except Exception as e:
 # LOAD DATASET
 # =========================================================
 
-data_path = os.path.join(DATA_DIR, "crop_prices.csv")
+data_path = os.path.join(
+    DATA_DIR,
+    "crop_prices.csv"
+)
 
 try:
-    df = pd.read_csv(data_path)
+
+    df = pd.read_csv(
+        data_path
+    )
 
     print("Dataset loaded successfully.")
     print(f"Total records: {len(df)}")
 
-except Exception:
-    app.logger.exception("Could not load crop_prices.csv.")
+except Exception as e:
+
+    print("ERROR: Could not load crop_prices.csv.")
+    print(str(e))
+
     df = pd.DataFrame()
-
-
-# =========================================================
-# PREPARE DATASET
-# =========================================================
 
 if not df.empty:
     required_columns = [
-        "Date",
-        "Crop",
-        "State",
-        "District",
-        "Market",
-        "Modal_Price"
+        "Date", "Crop", "State", "District", "Market", "Modal_Price"
     ]
 
     missing_columns = [
-        column for column in required_columns
+        column
+        for column in required_columns
         if column not in df.columns
     ]
 
     if missing_columns:
-        app.logger.error(
-            "Dataset is missing columns: %s", missing_columns
+
+        print(
+            "ERROR: Dataset is missing columns:",
+            missing_columns
         )
+
         df = pd.DataFrame()
 
     else:
+
+        # Convert date
         df["Date"] = pd.to_datetime(
-            df["Date"], errors="coerce"
+            df["Date"],
+            errors="coerce"
         )
 
+        # Clean text columns
         text_columns = [
-            "Crop", "State", "District", "Market"
+            "Crop",
+            "State",
+            "District",
+            "Market"
         ]
 
         for column in text_columns:
-            df[column] = df[column].astype(str).str.strip()
 
+            df[column] = (
+                df[column]
+                .astype(str)
+                .str.strip()
+            )
+
+        # Convert modal price
         df["Modal_Price"] = pd.to_numeric(
-            df["Modal_Price"], errors="coerce"
+            df["Modal_Price"],
+            errors="coerce"
         )
 
-        df = df.dropna(subset=required_columns)
+        # Remove invalid rows
+        df = df.dropna(
+            subset=required_columns
+        )
 
+        # Sort records
         group_columns = [
-            "Crop", "State", "District", "Market"
+            "Crop",
+            "State",
+            "District",
+            "Market"
         ]
 
         df = df.sort_values(
             group_columns + ["Date"]
-        ).reset_index(drop=True)
+        ).reset_index(
+            drop=True
+        )
 
 
 # =========================================================
-# HOME / HEALTH API
+# HOME API
 # =========================================================
 
 @app.route("/")
@@ -182,25 +213,31 @@ def home():
 # PREDICTION API
 # =========================================================
 
-@app.route("/predict", methods=["POST"])
+@app.route(
+    "/predict",
+    methods=["POST"]
+)
 def predict():
     try:
-        # Check model availability
+
+        # Check ML model
         if model is None or encoder is None:
             return jsonify({
                 "status": "error",
                 "message": "ML model could not be loaded."
             }), 500
 
-        # Check dataset availability
+        # Check dataset
         if df.empty:
             return jsonify({
                 "status": "error",
                 "message": "Dataset could not be loaded."
             }), 500
 
-        # Read request data
-        data = request.get_json(silent=True)
+        # Get request data
+        data = request.get_json(
+            silent=True
+        )
 
         if not data:
             return jsonify({
@@ -214,21 +251,24 @@ def predict():
         market = data.get("market")
         date_input = data.get("date")
 
-        # Validate required inputs
+        # Check required inputs
         if not all([
-            crop, state, district, market, date_input
+            crop,
+            state,
+            district,
+            market,
+            date_input
         ]):
+
             return jsonify({
                 "status": "error",
-                "message": (
-                    "Crop, state, district, market and date "
-                    "are required."
-                )
+                "message": "Crop, state, district, market and date are required."
             }), 400
 
-        # Validate prediction date
+        # Convert date
         prediction_date = pd.to_datetime(
-            date_input, errors="coerce"
+            date_input,
+            errors="coerce"
         )
 
         if pd.isna(prediction_date):
@@ -237,7 +277,7 @@ def predict():
                 "message": "Invalid prediction date."
             }), 400
 
-        # Find historical records for this market
+        # Check historical data
         historical = df[
             (df["Crop"] == crop) &
             (df["State"] == state) &
@@ -249,22 +289,24 @@ def predict():
         if len(historical) < 7:
             return jsonify({
                 "status": "error",
-                "message": (
-                    "At least 7 previous records are required."
-                )
+                "message": "At least 7 previous records are required."
             }), 400
 
         # Historical price features
-        previous_price = float(
+        previous_price = (
             historical.iloc[-1]["Modal_Price"]
         )
 
-        previous_3_day_avg = float(
-            historical.tail(3)["Modal_Price"].mean()
+        previous_3_day_avg = (
+            historical
+            .tail(3)["Modal_Price"]
+            .mean()
         )
 
-        previous_7_day_avg = float(
-            historical.tail(7)["Modal_Price"].mean()
+        previous_7_day_avg = (
+            historical
+            .tail(7)["Modal_Price"]
+            .mean()
         )
 
         # Date features
@@ -273,7 +315,41 @@ def predict():
         day = prediction_date.day
         day_of_week = prediction_date.dayofweek
 
-        # Numerical feature order must match training
+        # Create input data
+        input_data = pd.DataFrame({
+
+            "Crop": [crop],
+            "State": [state],
+            "District": [district],
+            "Market": [market],
+
+            "Year": [year],
+            "Month": [month],
+            "Day": [day],
+            "Day_of_Week": [day_of_week],
+
+            "Previous_Price": [
+                previous_price
+            ],
+
+            "Previous_3_Day_Avg": [
+                previous_3_day_avg
+            ],
+
+            "Previous_7_Day_Avg": [
+                previous_7_day_avg
+            ]
+
+        })
+
+        # Encode categorical features
+        categorical_features = [
+            "Crop",
+            "State",
+            "District",
+            "Market"
+        ]
+
         numerical_features = [
             "Year",
             "Month",
@@ -284,43 +360,40 @@ def predict():
             "Previous_7_Day_Avg"
         ]
 
-        numerical_data = np.array([[
-            year,
-            month,
-            day,
-            day_of_week,
-            previous_price,
-            previous_3_day_avg,
-            previous_7_day_avg
-        ]], dtype=np.float32)
-
-        # Encode categorical features
-        categorical_features = [
-            "Crop", "State", "District", "Market"
-        ]
-
-        categorical_data = pd.DataFrame({
-            "Crop": [crop],
-            "State": [state],
-            "District": [district],
-            "Market": [market]
-        })
-
         encoded_data = encoder.transform(
-            categorical_data[categorical_features]
+            input_data[categorical_features]
         )
 
-        # Combine features in the same order used in training
-        final_input = np.hstack([
-            numerical_data,
-            np.asarray(encoded_data, dtype=np.float32)
-        ]).astype(np.float32, copy=False)
+        encoded_df = pd.DataFrame(
+            encoded_data,
+            columns=encoder.get_feature_names_out(
+                categorical_features
+            )
+        )
 
-        # Predict price
-        prediction = model.predict(final_input)
-        predicted_price = float(prediction[0])
+        # Combine features
+        final_input = pd.concat(
+            [
+                input_data[numerical_features].reset_index(
+                    drop=True
+                ),
+                encoded_df.reset_index(
+                    drop=True
+                )
+            ],
+            axis=1
+        )
 
-        # Return existing API response format
+        # Make ML prediction
+        prediction = model.predict(
+            final_input.values
+        )
+
+        predicted_price = float(
+            prediction[0]
+        )
+
+        # Return result
         return jsonify({
             "status": "success",
             "crop": crop,
@@ -328,20 +401,34 @@ def predict():
             "district": district,
             "market": market,
             "date": date_input,
-            "previous_price": round(previous_price, 2),
+
+            "previous_price": round(
+                float(previous_price),
+                2
+            ),
+
             "previous_3_day_average": round(
-                previous_3_day_avg, 2
+                float(previous_3_day_avg),
+                2
             ),
+
             "previous_7_day_average": round(
-                previous_7_day_avg, 2
+                float(previous_7_day_avg),
+                2
             ),
+
             "predicted_modal_price": round(
-                predicted_price, 2
+                predicted_price,
+                2
             )
+
         })
 
     except Exception as e:
-        app.logger.exception("Prediction error")
+
+        app.logger.exception(
+            "Prediction error"
+        )
 
         return jsonify({
             "status": "error",
