@@ -144,6 +144,8 @@ except Exception as e:
 
     df = pd.DataFrame()
 
+history_group_indices = {}
+
 if not df.empty:
     required_columns = [
         "Date", "Crop", "State", "District", "Market", "Modal_Price"
@@ -213,7 +215,12 @@ if not df.empty:
             drop=True
         )
 
-
+        # Build a one-time index for faster historical lookups
+        history_group_indices = {
+            key: positions
+            for key, positions in
+            df.groupby(group_columns, sort=False).indices.items()
+        }
 # =========================================================
 
 # =========================================================
@@ -521,15 +528,18 @@ def predict():
         print("DEBUG state:", repr(state))
         print("DEBUG district:", repr(district))
         print("DEBUG market:", repr(market))
-        historical = df[
+        # Retrieve only the selected crop and market history
+        history_indices = history_group_indices.get(
+            (crop, state, district, market)
+        )
 
-
-            (df["Crop"] == crop) &
-            (df["State"] == state) &
-            (df["District"] == district) &
-            (df["Market"] == market) &
-            (df["Date"] < prediction_date)
-        ].sort_values("Date")
+        if history_indices is None:
+            historical = df.iloc[0:0]
+        else:
+            group_history = df.iloc[history_indices]
+            historical = group_history[
+                group_history["Date"] < prediction_date
+            ]
 
         # Validate historical records before calculating price features
         if len(historical) < 7:
