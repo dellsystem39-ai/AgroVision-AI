@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+﻿from flask import Flask, request, jsonify
 from flask_cors import CORS
 import joblib
 import pandas as pd
@@ -217,7 +217,8 @@ if not df.empty:
 # =========================================================
 
 # =========================================================
-# OPTIONS API
+# =========================================================
+# OPTIONS API - CASCADING LOCATION AND CROP FILTERS
 # =========================================================
 
 @app.route("/options", methods=["GET"])
@@ -226,49 +227,55 @@ def get_options():
         if df.empty:
             return jsonify({
                 "states": [],
-                "crops": [],
                 "districts": [],
                 "markets": [],
+                "crops": [],
                 "coverage": None
             })
 
         state = request.args.get("state", "").strip()
-        crop = request.args.get("crop", "").strip()
         district = request.args.get("district", "").strip()
+        market = request.args.get("market", "").strip()
 
-        states = sorted(df["State"].dropna().unique().tolist())
-        crops = sorted(df["Crop"].dropna().unique().tolist())
+        states = sorted(df["State"].dropna().astype(str).unique().tolist())
 
-        filtered = df.copy()
-
+        state_data = df.iloc[0:0]
         if state:
-            filtered = filtered[
-                filtered["State"].str.casefold() == state.casefold()
-            ]
-
-        if crop:
-            filtered = filtered[
-                filtered["Crop"].str.casefold() == crop.casefold()
+            state_data = df[
+                df["State"].astype(str).str.strip().str.casefold()
+                == state.casefold()
             ]
 
         districts = sorted(
-            filtered["District"].dropna().unique().tolist()
+            state_data["District"].dropna().astype(str).unique().tolist()
         )
 
+        district_data = state_data.iloc[0:0]
         if district:
-            filtered = filtered[
-                filtered["District"].str.casefold() == district.casefold()
+            district_data = state_data[
+                state_data["District"].astype(str).str.strip().str.casefold()
+                == district.casefold()
             ]
 
         markets = sorted(
-            filtered["Market"].dropna().unique().tolist()
+            district_data["Market"].dropna().astype(str).unique().tolist()
         )
+
+        market_data = district_data.iloc[0:0]
+        if market:
+            market_data = district_data[
+                district_data["Market"].astype(str).str.strip().str.casefold()
+                == market.casefold()
+            ]
+
+        crop_counts = market_data["Crop"].dropna().astype(str).value_counts()
+        crops = sorted(crop_counts[crop_counts >= 7].index.tolist())
 
         return jsonify({
             "states": states,
-            "crops": crops,
             "districts": districts,
             "markets": markets,
+            "crops": crops,
             "coverage": None
         })
 
@@ -276,7 +283,7 @@ def get_options():
         app.logger.exception("Options API failed")
         return jsonify({"error": "Could not load options"}), 500
 
-# HOME API
+# =========================================================# HOME API
 # =========================================================
 
 
@@ -524,6 +531,12 @@ def predict():
             (df["Date"] < prediction_date)
         ].sort_values("Date")
 
+        # Validate historical records before calculating price features
+        if len(historical) < 7:
+            return jsonify({
+                "status": "error",
+                "message": "Insufficient historical data for this crop, district and market. At least 7 previous records are required."
+            }), 422
 # Historical price features
         previous_price = (
             historical.iloc[-1]["Modal_Price"]
@@ -666,11 +679,15 @@ def predict():
                 2
             ),
 
-            "predicted_modal_price": round(
-                predicted_price,
-                2
-            )
+            "predicted_modal_price": round(predicted_price, 2),
 
+            "historical_prices": [
+                {
+                    "date": row["Date"].strftime("%Y-%m-%d"),
+                    "price": round(float(row["Modal_Price"]), 2)
+                }
+                for _, row in historical.tail(30).iterrows()
+            ]
         })
 
     except Exception as e:

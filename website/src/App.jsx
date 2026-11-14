@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import Auth from './Auth'
 import AgricultureHub from './AgricultureHub'
@@ -79,7 +79,7 @@ function PriceTrendChart({ currentPrice, predictedPrice, historicalPrices = [] }
                 Number.isFinite(predicted) && predicted > 0
 
   const formatPrice = value => Number.isFinite(value)
-    ? `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+    ? `Ã¢â€šÂ¹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
     : 'Unavailable'
 
   const records = (Array.isArray(historicalPrices) ? historicalPrices : [])
@@ -142,7 +142,7 @@ function PriceTrendChart({ currentPrice, predictedPrice, historicalPrices = [] }
             Explore all recorded prices and compare them with the AI estimate
           </p>
         </div>
-        <span className="agro-chart-unit">₹ / quintal</span>
+        <span className="agro-chart-unit">Ã¢â€šÂ¹ / quintal</span>
       </div>
 
       <div className="agro-history-toolbar">
@@ -276,7 +276,7 @@ function App() {
   const states = options.states
   const crops = options.crops
 
-  const [crop, setCrop] = useState('Tomato')
+  const [crop, setCrop] = useState('')
   const [stateName, setStateName] = useState('Karnataka')
   const [district, setDistrict] = useState('')
   const [market, setMarket] = useState('')
@@ -312,21 +312,24 @@ function App() {
   useEffect(() => {
     let cancelled = false
     const params = new URLSearchParams()
+
     if (stateName) params.set('state', stateName)
-    if (crop) params.set('crop', crop)
     if (district) params.set('district', district)
+    if (market) params.set('market', market)
+
     fetch(`${API_BASE}/options?${params.toString()}`)
       .then(response => {
         if (!response.ok) throw new Error('Could not load crop and location options')
         return response.json()
       })
       .then(data => {
-        if (cancelled) return
-        setOptions(data)
-        if (!data.states.includes(stateName)) setStateName(data.states.includes('Karnataka') ? 'Karnataka' : (data.states[0] || ''))
-        if (!data.crops.includes(crop)) setCrop(data.crops[0] || '')
-        if (!data.districts.includes(district)) setDistrict(data.districts[0] || '')
-        if (!data.markets.includes(market)) setMarket(data.markets[0] || '')
+        if (!cancelled) {
+          setOptions(data)
+          setCrop(currentCrop =>
+            data.crops?.includes(currentCrop) ? currentCrop : ''
+          )
+          setPrediction(null)
+        }
       })
       .catch(() => {
         if (!cancelled) {
@@ -335,8 +338,9 @@ function App() {
           setError('Could not load crop/location options. Check that the backend is running, then refresh this page.')
         }
       })
+
     return () => { cancelled = true }
-  }, [stateName, crop, district])
+  }, [stateName, district, market])
 
   const detectLocation = () => {
     if (!navigator.geolocation) {
@@ -707,27 +711,27 @@ function App() {
   <div className="prediction-layout">
     <form className="prediction-form" onSubmit={getPrediction}>
       <label>State
-        <select value={stateName} onChange={e => { setStateName(e.target.value); setDistrict(''); setMarket(''); clearForecast() }} disabled={!states.length} required>
+        <select value={stateName} onChange={e => { setStateName(e.target.value); setDistrict(''); setMarket(''); setCrop(''); clearForecast() }} disabled={!states.length} required>
           <option value="">Select state</option>
           {states.map(item => <option key={item} value={item}>{item}</option>)}
         </select>
       </label>
       <label>District
-        <select value={district} onChange={e => { setDistrict(e.target.value); setMarket(''); clearForecast() }} disabled={!districts.length} required>
+        <select value={district} onChange={e => { setDistrict(e.target.value); setMarket(''); setCrop(''); clearForecast() }} disabled={!districts.length} required>
           <option value="">{districts.length ? 'Select district' : 'No matching districts'}</option>
           {districts.map(item => <option key={item} value={item}>{item}</option>)}
         </select>
         {crop && stateName && districts.length === 0 && <small className="fine-print">No district data was found for this crop and state. Try another crop or state.</small>}
       </label>
       <label>Market
-        <select value={market} onChange={e => { setMarket(e.target.value); clearForecast() }} disabled={!markets.length} required>
+        <select value={market} onChange={e => { setMarket(e.target.value); setCrop(''); clearForecast() }} disabled={!markets.length} required>
           <option value="">{markets.length ? 'Select market' : 'No matching markets'}</option>
           {markets.map(item => <option key={item} value={item}>{item}</option>)}
         </select>
         {district && markets.length === 0 && <small className="fine-print">No market data was found for this selection. Choose another district.</small>}
       </label>
       <label>Crop
-        <select value={crop} onChange={e => { setCrop(e.target.value); setDistrict(''); setMarket(''); clearForecast() }} disabled={!crops.length} required>
+        <select value={crop} onChange={e => { setCrop(e.target.value); clearForecast() }} disabled={!crops.length} required>
           <option value="">Select crop</option>
           {crops.map(item => <option key={item} value={item}>{item}</option>)}
         </select>
