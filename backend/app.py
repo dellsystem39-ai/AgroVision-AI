@@ -5,6 +5,10 @@ import pandas as pd
 import numpy as np
 import os
 import requests
+import psycopg
+from werkzeug.security import generate_password_hash, check_password_hash
+from argon2 import PasswordHasher
+from itsdangerous import URLSafeTimedSerializer
 
 
 # =========================================================
@@ -13,6 +17,22 @@ import requests
 
 app = Flask(__name__)
 CORS(app)
+
+DATABASE_CONFIG = {
+    "host": "localhost",
+    "port": 5432,
+    "dbname": "agrovision_db",
+    "user": "postgres",
+    "password": os.environ.get("DB_PASSWORD", "")
+}
+
+def get_db_connection():
+    database_url = os.environ.get("DATABASE_URL")
+
+    if database_url:
+        return psycopg.connect(database_url)
+
+    return psycopg.connect(**DATABASE_CONFIG)
 
 # =========================================================
 # PATHS
@@ -108,17 +128,14 @@ except Exception as e:
 
 data_path = os.path.join(
     DATA_DIR,
-    "crop_prices.csv"
+    "historical_mandi_prices_clean.csv"
 )
 
 try:
+  df = pd.read_csv(data_path).rename(columns={"date": "Date", "commodity": "Crop", "state": "State", "district": "District", "market": "Market", "modal_price": "Modal_Price"})
 
-    df = pd.read_csv(
-        data_path
-    )
-
-    print("Dataset loaded successfully.")
-    print(f"Total records: {len(df)}")
+  print("Dataset loaded successfully.")
+  print(f"Total records: {len(df)}")
 
 except Exception as e:
 
@@ -198,8 +215,193 @@ if not df.empty:
 
 
 # =========================================================
+
+# =========================================================
+# OPTIONS API
+# =========================================================
+
+@app.route("/options", methods=["GET"])
+def get_options():
+    try:
+        if df.empty:
+            return jsonify({
+                "states": [],
+                "crops": [],
+                "districts": [],
+                "markets": [],
+                "coverage": None
+            })
+
+        state = request.args.get("state", "").strip()
+        crop = request.args.get("crop", "").strip()
+        district = request.args.get("district", "").strip()
+
+        states = sorted(df["State"].dropna().unique().tolist())
+        crops = sorted(df["Crop"].dropna().unique().tolist())
+
+        filtered = df.copy()
+
+        if state:
+            filtered = filtered[
+                filtered["State"].str.casefold() == state.casefold()
+            ]
+
+        if crop:
+            filtered = filtered[
+                filtered["Crop"].str.casefold() == crop.casefold()
+            ]
+
+        districts = sorted(
+            filtered["District"].dropna().unique().tolist()
+        )
+
+        if district:
+            filtered = filtered[
+                filtered["District"].str.casefold() == district.casefold()
+            ]
+
+        markets = sorted(
+            filtered["Market"].dropna().unique().tolist()
+        )
+
+        return jsonify({
+            "states": states,
+            "crops": crops,
+            "districts": districts,
+            "markets": markets,
+            "coverage": None
+        })
+
+    except Exception:
+        app.logger.exception("Options API failed")
+        return jsonify({"error": "Could not load options"}), 500
+
 # HOME API
 # =========================================================
+
+
+# =========================================================
+# AGROVISION AUTH API
+# =========================================================
+
+AUTH_SECRET = os.environ.get("AGROVISION_SECRET_KEY")
+if not AUTH_SECRET:
+    raise RuntimeError("AGROVISION_SECRET_KEY environment variable is required")
+
+token_serializer = URLSafeTimedSerializer(AUTH_SECRET)
+
+@app.route("/auth/signup", methods=["POST"])
+def auth_signup():
+    data = request.get_json(silent=True) or {}
+
+    full_name = (data.get("full_name") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    phone = (data.get("phone") or "").strip() or None
+    password = data.get("password") or ""
+
+    if not full_name or not email or not password:
+        return jsonify({"detail": "Name, email and password are required."}), 400
+
+    if len(password) < 8:
+        return jsonify({"detail": "Password must contain at least 8 characters."}), 400
+
+    if len(email) > 255 or len(full_name) > 255:
+        return jsonify({"detail": "Name or email is too long."}), 400
+
+    password_hash = generate_password_hash(password)
+
+    try:
+        with get_db_connection() as conn:
+            user = conn.execute(
+                """
+                INSERT INTO users
+                    (full_name, email, phone, role, password_hash)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, full_name, email, phone, role
+                """,
+                (full_name, email, phone, "farmer", password_hash)
+            ).fetchone()
+
+        return jsonify({
+            "message": "Account created successfully.",
+            "user": {
+                "id": user[0],
+                "full_name": user[1],
+                "email": user[2],
+                "phone": user[3],
+                "role": user[4]
+            }
+        }), 201
+
+    except psycopg.errors.UniqueViolation:
+        return jsonify({"detail": "An account with this email already exists."}), 409
+
+    except Exception:
+        app.logger.exception("Signup failed")
+        return jsonify({"detail": "Unable to create account. Please try again."}), 500
+
+
+@app.route("/auth/login", methods=["POST"])
+def auth_login():
+    data = request.get_json(silent=True) or {}
+
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+
+    if not email or not password:
+        return jsonify({"detail": "Email and password are required."}), 400
+
+    try:
+        with get_db_connection() as conn:
+            user = conn.execute(
+                """
+                SELECT id, full_name, email, phone, role, password_hash
+                FROM users
+                WHERE email = %s
+                """,
+                (email,)
+            ).fetchone()
+
+        if not user:
+            return jsonify({"detail": "Invalid email or password."}), 401
+
+        stored_hash = user[5] or ""
+        if stored_hash.startswith("$argon2"):
+            try:
+                password_valid = PasswordHasher().verify(stored_hash, password)
+            except Exception:
+                password_valid = False
+        else:
+            password_valid = check_password_hash(stored_hash, password)
+
+        if not password_valid:
+            return jsonify({"detail": "Invalid email or password."}), 401
+
+        access_token = token_serializer.dumps({
+            "user_id": user[0],
+            "email": user[2]
+        })
+
+        return jsonify({
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "user": {
+                "id": user[0],
+                "full_name": user[1],
+                "email": user[2],
+                "phone": user[3],
+                "role": user[4]
+            }
+        }), 200
+
+    except Exception:
+        import traceback
+        error_text = traceback.format_exc()
+        app.logger.error("Login failed:\n%s", error_text)
+        error_path = os.path.join(os.path.dirname(__file__), "login_error.log")
+        with open(error_path, "a", encoding="utf-8") as error_file:
+            error_file.write("\n--- LOGIN ERROR ---\n" + error_text + "\n")
+        return jsonify({"detail": "Unable to sign in. Please try again."}), 500
 
 @app.route("/")
 def home():
@@ -249,7 +451,37 @@ def predict():
         state = data.get("state")
         district = data.get("district")
         market = data.get("market")
-        date_input = data.get("date")
+        date_input = data.get("date") or pd.Timestamp.today().strftime("%Y-%m-%d")
+        pd.Timestamp.today().strftime("%Y-%m-%d")
+
+        if not all([crop, state, district]):
+            return jsonify({
+                "status": "error",
+                "message": "Crop, state and district are required."
+            }), 400
+
+        prediction_date = pd.to_datetime(date_input, errors="coerce")
+
+        if pd.isna(prediction_date):
+            return jsonify({
+                "status": "error",
+                "message": "Invalid prediction date."
+            }), 400
+
+        if not market:
+            available_markets = df[
+                (df["Crop"] == crop) &
+                (df["State"] == state) &
+                (df["District"] == district)
+            ]["Market"].dropna().unique()
+
+            if len(available_markets) == 0:
+                return jsonify({
+                    "status": "error",
+                    "message": "No supported market data for this crop and district."
+                }), 404
+
+            market = available_markets[0]
 
         # Check required inputs
         if not all([
@@ -278,7 +510,13 @@ def predict():
             }), 400
 
         # Check historical data
+        print("DEBUG crop:", repr(crop))
+        print("DEBUG state:", repr(state))
+        print("DEBUG district:", repr(district))
+        print("DEBUG market:", repr(market))
         historical = df[
+
+
             (df["Crop"] == crop) &
             (df["State"] == state) &
             (df["District"] == district) &
@@ -286,13 +524,7 @@ def predict():
             (df["Date"] < prediction_date)
         ].sort_values("Date")
 
-        if len(historical) < 7:
-            return jsonify({
-                "status": "error",
-                "message": "At least 7 previous records are required."
-            }), 400
-
-        # Historical price features
+# Historical price features
         previous_price = (
             historical.iloc[-1]["Modal_Price"]
         )
@@ -392,6 +624,23 @@ def predict():
         predicted_price = float(
             prediction[0]
         )
+
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO prediction_history
+                (crop_name, state, district, predicted_price, market)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (crop, state, district, predicted_price, market)
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as db_error:
+            app.logger.exception("Database save failed")
 
         # Return result
         return jsonify({

@@ -8,3 +8,5 @@ gunicorn
 joblib
 scikit-learn
 numpy
+psycopg[binary]
+argon2-cffi
