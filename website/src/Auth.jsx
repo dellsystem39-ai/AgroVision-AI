@@ -104,12 +104,12 @@ export default function Auth({ onAuthenticated }) {
   </svg>
   <div className="brand-wordmark">AgroVision<span>AI</span></div>
 </div>
-        <p className="brand-tagline">Smart Agriculture Â· Better Decisions</p>
+        <p className="brand-tagline">Smart Agriculture · Better Decisions</p>
         <div className="brand-divider"></div>
         <h2>Grow Smarter.<br/>Harvest <span>Better.</span></h2>
         <p className="brand-description">
           AI-powered crop price prediction, market insights, weather updates
-          and crop planning â€” all in one platform.
+          and crop planning — all in one platform.
         </p>
         <p className="brand-footer">Technology for a greener tomorrow.</p>
       </div>
