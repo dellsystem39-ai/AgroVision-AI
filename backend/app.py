@@ -1,4 +1,4 @@
-﻿from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import joblib
 import pandas as pd
@@ -30,9 +30,9 @@ def get_db_connection():
     database_url = os.environ.get("DATABASE_URL")
 
     if database_url:
-        return psycopg.connect(database_url)
+        return psycopg.connect(database_url, connect_timeout=3)
 
-    return psycopg.connect(**DATABASE_CONFIG)
+    return psycopg.connect(**DATABASE_CONFIG, connect_timeout=3)
 
 # =========================================================
 # PATHS

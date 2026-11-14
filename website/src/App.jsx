@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import Auth from './Auth'
 import AgricultureHub from './AgricultureHub'
@@ -79,7 +79,7 @@ function PriceTrendChart({ currentPrice, predictedPrice, historicalPrices = [] }
                 Number.isFinite(predicted) && predicted > 0
 
   const formatPrice = value => Number.isFinite(value)
-    ? `Ã¢â€šÂ¹${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+    ? `\u20B9${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
     : 'Unavailable'
 
   const records = (Array.isArray(historicalPrices) ? historicalPrices : [])
@@ -142,7 +142,7 @@ function PriceTrendChart({ currentPrice, predictedPrice, historicalPrices = [] }
             Explore all recorded prices and compare them with the AI estimate
           </p>
         </div>
-        <span className="agro-chart-unit">Ã¢â€šÂ¹ / quintal</span>
+        <span className="agro-chart-unit">{'\u20B9'} / quintal</span>
       </div>
 
       <div className="agro-history-toolbar">
