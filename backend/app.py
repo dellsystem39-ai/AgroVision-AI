@@ -225,6 +225,71 @@ if not df.empty:
 
 # =========================================================
 # =========================================================
+
+# =========================================================
+# SECURE DATA.GOV.IN MANDI API TEST
+# =========================================================
+
+from hmac import compare_digest
+
+@app.route("/api/mandi/test", methods=["GET"])
+def test_mandi_api():
+    api_key = os.environ.get("DATA_GOV_IN_API_KEY", "")
+    supplied_key = request.headers.get("X-AgroVision-Test-Key", "")
+
+    if not api_key:
+        return jsonify({"status": "error", "message": "API key not configured."}), 503
+
+    if not supplied_key or not compare_digest(supplied_key, api_key):
+        return jsonify({"status": "error", "message": "Unauthorized."}), 401
+
+    resource_id = "9ef84268-d588-465a-a308-a864a43d0070"
+
+    try:
+        response = requests.get(
+            f"https://api.data.gov.in/resource/{resource_id}",
+            params={
+                "api-key": api_key,
+                "format": "json",
+                "limit": 3
+            },
+            timeout=(5, 20)
+        )
+
+        if response.status_code != 200:
+            app.logger.error("Mandi provider HTTP status: %s", response.status_code)
+            return jsonify({
+                "status": "error",
+                "message": "Government mandi API request failed.",
+                "upstream_status": response.status_code
+            }), 502
+
+        payload = response.json()
+        records = payload.get("records", [])
+
+        sample = [{
+            "state": r.get("state"),
+            "district": r.get("district"),
+            "market": r.get("market"),
+            "commodity": r.get("commodity"),
+            "arrival_date": r.get("arrival_date"),
+            "modal_price": r.get("modal_price")
+        } for r in records[:3]]
+
+        return jsonify({
+            "status": "success",
+            "source": "data.gov.in",
+            "records_received": len(records),
+            "total_records_available": payload.get("total"),
+            "sample_records": sample
+        })
+
+    except requests.Timeout:
+        return jsonify({"status": "error", "message": "Provider timed out."}), 504
+    except Exception:
+        app.logger.exception("Mandi API test failed")
+        return jsonify({"status": "error", "message": "Mandi API test failed."}), 502
+
 # OPTIONS API - CASCADING LOCATION AND CROP FILTERS
 # =========================================================
 
